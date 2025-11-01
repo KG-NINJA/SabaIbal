@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>クラフトサバイバル - HTML 2D</title>
+  <style>
+    :root {
+      --day-sky: #8dd9ff;
+      --night-sky: #0a0d2a;
+      --ui-bg: rgba(20, 20, 20, 0.7);
+      --ui-text: #f4f7ff;
+      font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, var(--day-sky), #4caf50);
+      transition: background 1s ease;
+      color: #1c2733;
+    }
+
+    body.night {
+      background: radial-gradient(circle at 50% 20%, #1a2755 0%, var(--night-sky) 100%);
+      color: #e4ebff;
+    }
+
+    main {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: auto;
+      justify-items: center;
+      padding: 24px;
+    }
+
+    canvas {
+      background: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      border-radius: 12px;
+      image-rendering: pixelated;
+    }
+
+    .hud {
+      width: 960px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      background: var(--ui-bg);
+      color: var(--ui-text);
+      padding: 12px 16px;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+    }
+
+    .hud section {
+      flex: 1 1 200px;
+    }
+
+    .hud h2 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .hud p {
+      margin: 4px 0;
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+
+    .game-over {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+      background: rgba(0, 0, 0, 0.65);
+      color: #fff;
+      text-align: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 10;
+    }
+
+    .game-over.visible {
+      display: flex;
+    }
+
+    .game-over h1 {
+      margin: 0;
+      font-size: 2.4rem;
+      letter-spacing: 0.08em;
+    }
+
+    .game-over button {
+      border: none;
+      border-radius: 999px;
+      padding: 12px 28px;
+      font-size: 1.1rem;
+      background: linear-gradient(135deg, #ff6d6d, #ff9a62);
+      color: #fff;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .game-over button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
+    }
+
+    footer {
+      font-size: 0.85rem;
+      text-align: center;
+      color: inherit;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <canvas id="game" width="960" height="640"></canvas>
+    <div class="hud" id="hud">
+      <section>
+        <h2>生存情報</h2>
+        <p id="time">時間: 昼</p>
+        <p id="cycle">日数: 1</p>
+        <p id="health">体力: 100</p>
+      </section>
+      <section>
+        <h2>インベントリ</h2>
+        <p id="inventory">木材:0 石材:0 肉:0</p>
+      </section>
+      <section>
+        <h2>操作説明</h2>
+        <p>WASD / 矢印キー: 移動</p>
+        <p>Space: 採取・攻撃</p>
+        <p>B: 壁を建築 (木材2)</p>
+      </section>
+    </div>
+    <footer>
+      昼は素材集めと狩りで準備を整え、夜は建築した防壁で怪物から身を守ろう！
+    </footer>
+  </main>
+
+  <div class="game-over" id="gameOver">
+    <h1>Game Over</h1>
+    <p id="result"></p>
+    <button id="retry">もう一度挑戦</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const TILE_SIZE = 32;
+    const GRID_WIDTH = canvas.width / TILE_SIZE;
+    const GRID_HEIGHT = canvas.height / TILE_SIZE;
+    const MOVEMENT_DELAY = 180; // milliseconds between player steps
+    const MONSTER_STEP_DELAY = 450; // milliseconds between monster steps
+
+    const COLORS = {
+      grass: '#5cb85c',
+      forest: '#387c38',
+      stone: '#bfbfbf',
+      water: '#4fa3c6',
+      wall: '#8b5a2b',
+      animal: '#f2d388',
+      monster: '#ba2d2d',
+      player: '#fffb91'
+    };
+
+    const world = [];
+    const animals = [];
+    const monsters = [];
+    const walls = [];
+
+    const resourceNodes = [];
+
+    let inputs = new Set();
+    let lastInteraction = 0;
+
+    const player = {
+      x: Math.floor(GRID_WIDTH / 2),
+      y: Math.floor(GRID_HEIGHT / 2),
+      health: 100,
+      wood: 0,
+      stone: 0,
+      meat: 0
+    };
+
+    const DAY_LENGTH = 120 * 1000; // 120 seconds per full cycle
+    let elapsed = 0;
+    let lastTimestamp = 0;
+    let dayCount = 1;
+    let gameOver = false;
+    let movementCooldown = 0;
+
+    const hudTime = document.getElementById('time');
+    const hudCycle = document.getElementById('cycle');
+    const hudHealth = document.getElementById('health');
+    const hudInventory = document.getElementById('inventory');
+    const gameOverView = document.getElementById('gameOver');
+    const result = document.getElementById('result');
+    const retry = document.getElementById('retry');
+
+    retry.addEventListener('click', () => {
+      window.location.reload();
+    });
+
+    function initWorld() {
+      for (let y = 0; y < GRID_HEIGHT; y++) {
+        const row = [];
+        for (let x = 0; x < GRID_WIDTH; x++) {
+          row.push({ type: 'grass' });
+        }
+        world.push(row);
+      }
+
+      const treeCount = Math.floor((GRID_WIDTH * GRID_HEIGHT) / 10);
+      const stoneCount = Math.floor((GRID_WIDTH * GRID_HEIGHT) / 16);
+
+      // Seed some forest clusters and stones
+      for (let i = 0; i < treeCount; i++) {
+        placeResource('tree');
+      }
+      for (let i = 0; i < stoneCount; i++) {
+        placeResource('stone');
+      }
+    }
+
+    function placeResource(type) {
+      let placed = false;
+      let attempts = 0;
+      while (!placed && attempts < 200) {
+        attempts++;
+        const x = Math.floor(Math.random() * GRID_WIDTH);
+        const y = Math.floor(Math.random() * GRID_HEIGHT);
+        if (!isBlocked(x, y)) {
+          resourceNodes.push({ x, y, type, life: type === 'tree' ? 3 : 4 });
+          placed = true;
+        }
+      }
+    }
+
+    function spawnAnimal() {
+      const options = getEdgeTiles();
+      if (!options.length) return;
+      const spot = options[Math.floor(Math.random() * options.length)];
+      animals.push({ ...spot, hp: 2, cooldown: 500 + Math.random() * 500 });
+    }
+
+    function spawnMonster() {
+      const options = getEdgeTiles();
+      if (!options.length) return;
+      const spot = options[Math.floor(Math.random() * options.length)];
+      monsters.push({ ...spot, hp: 3, target: player, cooldown: MONSTER_STEP_DELAY });
+    }
+
+    function getEdgeTiles() {
+      const edgeTiles = [];
+      for (let x = 0; x < GRID_WIDTH; x++) {
+        edgeTiles.push({ x, y: 0 });
+        edgeTiles.push({ x, y: GRID_HEIGHT - 1 });
+      }
+      for (let y = 1; y < GRID_HEIGHT - 1; y++) {
+        edgeTiles.push({ x: 0, y });
+        edgeTiles.push({ x: GRID_WIDTH - 1, y });
+      }
+      return edgeTiles.filter(tile => !isBlocked(tile.x, tile.y));
+    }
+
+    function isBlocked(x, y) {
+      if (x < 0 || y < 0 || x >= GRID_WIDTH || y >= GRID_HEIGHT) return true;
+      if (walls.some(w => w.x === x && w.y === y)) return true;
+      return resourceNodes.some(node => node.x === x && node.y === y && node.life > 0);
+    }
+
+    function isNight() {
+      const cycle = (elapsed % DAY_LENGTH) / DAY_LENGTH;
+      return cycle >= 0.5;
+    }
+
+    function update(dt) {
+      if (gameOver) return;
+
+      elapsed += dt;
+      movementCooldown = Math.max(0, movementCooldown - dt);
+      const cycle = (elapsed % DAY_LENGTH) / DAY_LENGTH;
+
+      if (cycle < 0.5) {
+        // Daytime
+        document.body.classList.remove('night');
+        if (animals.length < 6 && Math.random() < 0.005) {
+          spawnAnimal();
+        }
+        monsters.length = 0; // monsters retreat at dawn
+      } else {
+        document.body.classList.add('night');
+        if (Math.random() < 0.008 && monsters.length < 6) {
+          spawnMonster();
+        }
+      }
+
+      if (elapsed >= DAY_LENGTH * dayCount) {
+        dayCount++;
+      }
+
+      movePlayer();
+      moveAnimals(dt);
+      moveMonsters(dt);
+      handleCombat();
+      updateHUD(cycle);
+    }
+
+    function movePlayer() {
+      let dx = 0, dy = 0;
+      if (inputs.has('ArrowUp') || inputs.has('KeyW')) dy--;
+      if (inputs.has('ArrowDown') || inputs.has('KeyS')) dy++;
+      if (inputs.has('ArrowLeft') || inputs.has('KeyA')) dx--;
+      if (inputs.has('ArrowRight') || inputs.has('KeyD')) dx++;
+
+      if (dx === 0 && dy === 0) return;
+      if (movementCooldown > 0) return;
+
+      const nx = player.x + dx;
+      const ny = player.y + dy;
+      if (!isSolid(nx, ny)) {
+        player.x = nx;
+        player.y = ny;
+        movementCooldown = MOVEMENT_DELAY;
+      }
+    }
+
+    function isSolid(x, y) {
+      if (x < 0 || y < 0 || x >= GRID_WIDTH || y >= GRID_HEIGHT) return true;
+      if (walls.some(w => w.x === x && w.y === y)) return true;
+      return false;
+    }
+
+    function moveAnimals(dt) {
+      animals.forEach(animal => {
+        animal.cooldown -= dt;
+        if (animal.cooldown <= 0) {
+          animal.cooldown = 1000 + Math.random() * 2000;
+          const dir = [[1,0],[-1,0],[0,1],[0,-1]][Math.floor(Math.random() * 4)];
+          const nx = animal.x + dir[0];
+          const ny = animal.y + dir[1];
+          if (!isSolid(nx, ny)) {
+            animal.x = clamp(nx, 0, GRID_WIDTH - 1);
+            animal.y = clamp(ny, 0, GRID_HEIGHT - 1);
+          }
+        }
+      });
+    }
+
+    function moveMonsters(dt) {
+      monsters.forEach(monster => {
+        if (monster.cooldown === undefined) {
+          monster.cooldown = MONSTER_STEP_DELAY;
+        }
+        monster.cooldown -= dt;
+        if (monster.cooldown > 0) {
+          return;
+        }
+
+        const dx = Math.sign(player.x - monster.x);
+        const dy = Math.sign(player.y - monster.y);
+        const nx = monster.x + dx;
+        const ny = monster.y + dy;
+
+        if (!isSolid(nx, ny)) {
+          monster.x = nx;
+          monster.y = ny;
+        }
+
+        monster.cooldown = MONSTER_STEP_DELAY;
+
+        if (monster.x === player.x && monster.y === player.y) {
+          player.health -= 5;
+          if (player.health <= 0) {
+            triggerGameOver();
+          }
+        }
+      });
+    }
+
+    function handleCombat() {
+      if (!inputs.has('Space')) return;
+      const now = performance.now();
+      if (now - lastInteraction < 250) return;
+      lastInteraction = now;
+
+      const nodes = resourceNodes.filter(node => node.life > 0 && distance(node, player) <= 1);
+      if (nodes.length) {
+        nodes[0].life -= 1;
+        if (nodes[0].type === 'tree') {
+          player.wood += 1;
+        } else {
+          player.stone += 1;
+        }
+      } else {
+        const targetAnimal = animals.find(animal => distance(animal, player) <= 1);
+        if (targetAnimal) {
+          targetAnimal.hp -= 1;
+          if (targetAnimal.hp <= 0) {
+            player.meat += 1;
+            animals.splice(animals.indexOf(targetAnimal), 1);
+          }
+        } else {
+          const targetMonster = monsters.find(monster => distance(monster, player) <= 1);
+          if (targetMonster) {
+            targetMonster.hp -= 1;
+            if (targetMonster.hp <= 0) {
+              monsters.splice(monsters.indexOf(targetMonster), 1);
+            }
+          }
+        }
+      }
+    }
+
+    function buildWall() {
+      if (player.wood < 2) return;
+      const target = getFacingTile();
+      if (!target) return;
+      if (isSolid(target.x, target.y)) return;
+      player.wood -= 2;
+      walls.push(target);
+    }
+
+    function getFacingTile() {
+      if (inputs.has('ArrowUp') || inputs.has('KeyW')) return { x: player.x, y: player.y - 1 };
+      if (inputs.has('ArrowDown') || inputs.has('KeyS')) return { x: player.x, y: player.y + 1 };
+      if (inputs.has('ArrowLeft') || inputs.has('KeyA')) return { x: player.x - 1, y: player.y };
+      if (inputs.has('ArrowRight') || inputs.has('KeyD')) return { x: player.x + 1, y: player.y };
+      return null;
+    }
+
+    function distance(a, b) {
+      return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw ground
+      for (let y = 0; y < GRID_HEIGHT; y++) {
+        for (let x = 0; x < GRID_WIDTH; x++) {
+          ctx.fillStyle = COLORS.grass;
+          ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+
+      resourceNodes.forEach(node => {
+        if (node.life <= 0) return;
+        ctx.fillStyle = node.type === 'tree' ? COLORS.forest : COLORS.stone;
+        ctx.beginPath();
+        ctx.roundRect(node.x * TILE_SIZE + 4, node.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8, 6);
+        ctx.fill();
+      });
+
+      walls.forEach(wall => {
+        ctx.fillStyle = COLORS.wall;
+        ctx.fillRect(wall.x * TILE_SIZE + 6, wall.y * TILE_SIZE + 6, TILE_SIZE - 12, TILE_SIZE - 12);
+      });
+
+      animals.forEach(animal => {
+        ctx.fillStyle = COLORS.animal;
+        ctx.beginPath();
+        ctx.arc(animal.x * TILE_SIZE + TILE_SIZE / 2, animal.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      monsters.forEach(monster => {
+        ctx.fillStyle = COLORS.monster;
+        ctx.fillRect(monster.x * TILE_SIZE + 4, monster.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+      });
+
+      ctx.fillStyle = COLORS.player;
+      ctx.beginPath();
+      ctx.arc(player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      requestAnimationFrame(draw);
+    }
+
+    function updateHUD(cycle) {
+      const dayPhase = cycle < 0.5 ? '昼' : '夜';
+      hudTime.textContent = `時間: ${dayPhase}`;
+      hudCycle.textContent = `日数: ${dayCount}`;
+      hudHealth.textContent = `体力: ${player.health}`;
+      hudInventory.textContent = `木材:${player.wood} 石材:${player.stone} 肉:${player.meat}`;
+    }
+
+    function triggerGameOver() {
+      gameOver = true;
+      result.textContent = `${dayCount} 日目で倒れました。もう一度挑戦しますか？`;
+      gameOverView.classList.add('visible');
+    }
+
+    document.addEventListener('keydown', (event) => {
+      inputs.add(event.code);
+      if (event.code === 'Space') {
+        event.preventDefault();
+      }
+      if (event.code === 'KeyB') {
+        buildWall();
+      }
+    });
+
+    document.addEventListener('keyup', (event) => {
+      inputs.delete(event.code);
+    });
+
+    function gameLoop(timestamp) {
+      if (!lastTimestamp) lastTimestamp = timestamp;
+      const dt = timestamp - lastTimestamp;
+      lastTimestamp = timestamp;
+      update(dt);
+      if (!gameOver) {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+
+    initWorld();
+    requestAnimationFrame(draw);
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
