@@ -139,7 +139,7 @@
         <h2>操作説明</h2>
         <p>WASD / 矢印キー: 移動</p>
         <p>Space: 採取・攻撃</p>
-        <p>B: 壁を建築 (木材2)</p>
+        <p>B: 壁を建築 (木材1)</p>
       </section>
     </div>
     <footer>
@@ -176,17 +176,18 @@
     const animals = [];
     const monsters = [];
     const walls = [];
-
     const resourceNodes = [];
 
     let inputs = new Set();
     let lastInteraction = 0;
+    let lastBuildTime = 0;
     let monsterMoveCounter = 0;
-    let monsterMoveInterval = 3; // モンスターは3フレームごとに移動
+    let monsterMoveInterval = 3;
     let playerMoveCounter = 0;
-    let playerMoveInterval = 8; // プレイヤーは8フレームごとに移動（約133ms）
+    let playerMoveInterval = 8;
     let monsterAttackCounter = 0;
-    let monsterAttackInterval = 5; // モンスターの攻撃判定用
+    let monsterAttackInterval = 5;
+    let lastPlayerFacingDir = { x: 1, y: 0 };
 
     const player = {
       x: Math.floor(GRID_WIDTH / 2),
@@ -197,7 +198,7 @@
       meat: 0
     };
 
-    const DAY_LENGTH = 120 * 1000; // 昼夜サイクルを120秒に延長
+    const DAY_LENGTH = 120 * 1000;
     let elapsed = 0;
     let lastTimestamp = 0;
     let dayCount = 1;
@@ -224,7 +225,6 @@
         world.push(row);
       }
 
-      // Seed some forest clusters and stones
       for (let i = 0; i < 40; i++) {
         placeResource('tree');
       }
@@ -292,12 +292,11 @@
       const cycle = (elapsed % DAY_LENGTH) / DAY_LENGTH;
 
       if (cycle < 0.5) {
-        // Daytime
         document.body.classList.remove('night');
         if (animals.length < 4 && Math.random() < 0.005) {
           spawnAnimal();
         }
-        monsters.length = 0; // monsters retreat at dawn
+        monsters.length = 0;
       } else {
         document.body.classList.add('night');
         if (Math.random() < 0.008 && monsters.length < 6) {
@@ -319,7 +318,6 @@
     function movePlayer() {
       playerMoveCounter++;
       
-      // プレイヤーは遅いペースで移動
       if (playerMoveCounter < playerMoveInterval) return;
       playerMoveCounter = 0;
 
@@ -330,6 +328,7 @@
       if (inputs.has('ArrowRight') || inputs.has('KeyD')) dx++;
 
       if (dx !== 0 || dy !== 0) {
+        lastPlayerFacingDir = { x: dx, y: dy };
         const nx = player.x + dx;
         const ny = player.y + dy;
         if (!isSolid(nx, ny)) {
@@ -365,7 +364,6 @@
       monsterMoveCounter++;
       monsterAttackCounter++;
       
-      // モンスターは遅いペースで移動
       if (monsterMoveCounter >= 6) {
         monsterMoveCounter = 0;
         
@@ -382,7 +380,6 @@
         });
       }
 
-      // 攻撃判定は少し頻繁に
       if (monsterAttackCounter >= monsterAttackInterval) {
         monsterAttackCounter = 0;
         
@@ -412,19 +409,24 @@
           player.stone += 1;
         }
       } else {
-        const targetAnimal = animals.find(animal => distance(animal, player) <= 1);
-        if (targetAnimal) {
-          targetAnimal.hp -= 1;
-          if (targetAnimal.hp <= 0) {
-            player.meat += 1;
-            animals.splice(animals.indexOf(targetAnimal), 1);
-          }
+        const targetWall = walls.find(wall => distance(wall, player) <= 1);
+        if (targetWall) {
+          walls.splice(walls.indexOf(targetWall), 1);
         } else {
-          const targetMonster = monsters.find(monster => distance(monster, player) <= 1);
-          if (targetMonster) {
-            targetMonster.hp -= 1;
-            if (targetMonster.hp <= 0) {
-              monsters.splice(monsters.indexOf(targetMonster), 1);
+          const targetAnimal = animals.find(animal => distance(animal, player) <= 1);
+          if (targetAnimal) {
+            targetAnimal.hp -= 1;
+            if (targetAnimal.hp <= 0) {
+              player.meat += 1;
+              animals.splice(animals.indexOf(targetAnimal), 1);
+            }
+          } else {
+            const targetMonster = monsters.find(monster => distance(monster, player) <= 1);
+            if (targetMonster) {
+              targetMonster.hp -= 1;
+              if (targetMonster.hp <= 0) {
+                monsters.splice(monsters.indexOf(targetMonster), 1);
+              }
             }
           }
         }
@@ -432,20 +434,19 @@
     }
 
     function buildWall() {
-      if (player.wood < 2) return;
-      const target = getFacingTile();
-      if (!target) return;
-      if (isSolid(target.x, target.y)) return;
-      player.wood -= 2;
-      walls.push(target);
-    }
+      if (player.wood < 1) return;
+      const now = performance.now();
+      if (now - lastBuildTime < 150) return;
+      lastBuildTime = now;
 
-    function getFacingTile() {
-      if (inputs.has('ArrowUp') || inputs.has('KeyW')) return { x: player.x, y: player.y - 1 };
-      if (inputs.has('ArrowDown') || inputs.has('KeyS')) return { x: player.x, y: player.y + 1 };
-      if (inputs.has('ArrowLeft') || inputs.has('KeyA')) return { x: player.x - 1, y: player.y };
-      if (inputs.has('ArrowRight') || inputs.has('KeyD')) return { x: player.x + 1, y: player.y };
-      return null;
+      const target = {
+        x: player.x + lastPlayerFacingDir.x,
+        y: player.y + lastPlayerFacingDir.y
+      };
+      
+      if (isSolid(target.x, target.y)) return;
+      player.wood -= 1;
+      walls.push(target);
     }
 
     function distance(a, b) {
@@ -459,12 +460,16 @@
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Draw ground
       for (let y = 0; y < GRID_HEIGHT; y++) {
         for (let x = 0; x < GRID_WIDTH; x++) {
           ctx.fillStyle = COLORS.grass;
           ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
+      }
+
+      if (isNight()) {
+        ctx.fillStyle = 'rgba(10, 13, 42, 0.5)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
       resourceNodes.forEach(node => {
