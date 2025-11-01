@@ -1,4 +1,18 @@
-<!DOCTYPE html>
+if (performance.now() < invincibleUntil) {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
+        ctx.beginPath();
+        ctx.arc(player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 無敵状態の警告テキスト
+        const remaining = Math.ceil((invincibleUntil - performance.now()) / 1000);
+        ctx.fillStyle = '#ffeb3b';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${remaining}s`, player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE - 12);
+      }
+
+      requestAnimationFrame(draw);<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -141,6 +155,12 @@
         <p>Space: 採取・攻撃</p>
         <p>B: 壁を建築 (木材1)</p>
       </section>
+      <section>
+        <h2>アイテム</h2>
+        <p>🍄 キノコ: 取ると8秒間無敵に！</p>
+        <p>無敵中は怪物に一方的に</p>
+        <p>攻撃できます</p>
+      </section>
     </div>
     <footer>
       昼は素材集めと狩りで準備を整え、夜は建築した防壁で怪物から身を守ろう！
@@ -165,29 +185,27 @@
       grass: '#5cb85c',
       forest: '#387c38',
       stone: '#bfbfbf',
-      water: '#4fa3c6',
       wall: '#8b5a2b',
       animal: '#f2d388',
       monster: '#ba2d2d',
-      player: '#fffb91'
+      player: '#fffb91',
+      mushroom: '#ff6b9d'
     };
 
-    const world = [];
     const animals = [];
     const monsters = [];
     const walls = [];
     const resourceNodes = [];
+    const mushrooms = [];
 
     let inputs = new Set();
     let lastInteraction = 0;
     let lastBuildTime = 0;
     let monsterMoveCounter = 0;
-    let monsterMoveInterval = 3;
     let playerMoveCounter = 0;
-    let playerMoveInterval = 8;
     let monsterAttackCounter = 0;
-    let monsterAttackInterval = 5;
     let lastPlayerFacingDir = { x: 1, y: 0 };
+    let invincibleUntil = 0;
 
     const player = {
       x: Math.floor(GRID_WIDTH / 2),
@@ -217,14 +235,6 @@
     });
 
     function initWorld() {
-      for (let y = 0; y < GRID_HEIGHT; y++) {
-        const row = [];
-        for (let x = 0; x < GRID_WIDTH; x++) {
-          row.push({ type: 'grass' });
-        }
-        world.push(row);
-      }
-
       for (let i = 0; i < 40; i++) {
         placeResource('tree');
       }
@@ -258,7 +268,15 @@
       const options = getEdgeTiles();
       if (!options.length) return;
       const spot = options[Math.floor(Math.random() * options.length)];
-      monsters.push({ ...spot, hp: 3, target: player });
+      monsters.push({ ...spot, hp: 3 });
+    }
+
+    function spawnMushroom() {
+      const x = Math.floor(Math.random() * GRID_WIDTH);
+      const y = Math.floor(Math.random() * GRID_HEIGHT);
+      if (!isBlocked(x, y)) {
+        mushrooms.push({ x, y });
+      }
     }
 
     function getEdgeTiles() {
@@ -308,6 +326,10 @@
         dayCount++;
       }
 
+      if (Math.random() < 0.001 && mushrooms.length < 3) {
+        spawnMushroom();
+      }
+
       movePlayer();
       moveAnimals(dt);
       moveMonsters(dt);
@@ -317,8 +339,7 @@
 
     function movePlayer() {
       playerMoveCounter++;
-      
-      if (playerMoveCounter < playerMoveInterval) return;
+      if (playerMoveCounter < 8) return;
       playerMoveCounter = 0;
 
       let dx = 0, dy = 0;
@@ -353,8 +374,8 @@
           const nx = animal.x + dir[0];
           const ny = animal.y + dir[1];
           if (!isSolid(nx, ny)) {
-            animal.x = clamp(nx, 0, GRID_WIDTH - 1);
-            animal.y = clamp(ny, 0, GRID_HEIGHT - 1);
+            animal.x = Math.max(0, Math.min(GRID_WIDTH - 1, nx));
+            animal.y = Math.max(0, Math.min(GRID_HEIGHT - 1, ny));
           }
         }
       });
@@ -380,14 +401,22 @@
         });
       }
 
-      if (monsterAttackCounter >= monsterAttackInterval) {
+      if (monsterAttackCounter >= 5) {
         monsterAttackCounter = 0;
         
         monsters.forEach(monster => {
           if (monster.x === player.x && monster.y === player.y) {
-            player.health -= 5;
-            if (player.health <= 0) {
-              triggerGameOver();
+            const now = performance.now();
+            if (now < invincibleUntil) {
+              monster.hp -= 1;
+              if (monster.hp <= 0) {
+                monsters.splice(monsters.indexOf(monster), 1);
+              }
+            } else {
+              player.health -= 5;
+              if (player.health <= 0) {
+                triggerGameOver();
+              }
             }
           }
         });
@@ -408,27 +437,37 @@
         } else {
           player.stone += 1;
         }
-      } else {
-        const targetWall = walls.find(wall => distance(wall, player) <= 1);
-        if (targetWall) {
-          walls.splice(walls.indexOf(targetWall), 1);
-        } else {
-          const targetAnimal = animals.find(animal => distance(animal, player) <= 1);
-          if (targetAnimal) {
-            targetAnimal.hp -= 1;
-            if (targetAnimal.hp <= 0) {
-              player.meat += 1;
-              animals.splice(animals.indexOf(targetAnimal), 1);
-            }
-          } else {
-            const targetMonster = monsters.find(monster => distance(monster, player) <= 1);
-            if (targetMonster) {
-              targetMonster.hp -= 1;
-              if (targetMonster.hp <= 0) {
-                monsters.splice(monsters.indexOf(targetMonster), 1);
-              }
-            }
-          }
+        return;
+      }
+
+      const mushroom = mushrooms.find(m => distance(m, player) <= 1);
+      if (mushroom) {
+        invincibleUntil = now + 8000;
+        mushrooms.splice(mushrooms.indexOf(mushroom), 1);
+        return;
+      }
+
+      const targetWall = walls.find(wall => distance(wall, player) <= 1);
+      if (targetWall) {
+        walls.splice(walls.indexOf(targetWall), 1);
+        return;
+      }
+
+      const targetAnimal = animals.find(animal => distance(animal, player) <= 1);
+      if (targetAnimal) {
+        targetAnimal.hp -= 1;
+        if (targetAnimal.hp <= 0) {
+          player.meat += 1;
+          animals.splice(animals.indexOf(targetAnimal), 1);
+        }
+        return;
+      }
+
+      const targetMonster = monsters.find(monster => distance(monster, player) <= 1);
+      if (targetMonster) {
+        targetMonster.hp -= 1;
+        if (targetMonster.hp <= 0) {
+          monsters.splice(monsters.indexOf(targetMonster), 1);
         }
       }
     }
@@ -453,10 +492,6 @@
       return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     }
 
-    function clamp(value, min, max) {
-      return Math.min(Math.max(value, min), max);
-    }
-
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -474,7 +509,7 @@
 
       resourceNodes.forEach(node => {
         if (node.life <= 0) return;
-        ctx.fillStyle = node.type === 'tree' ? COLORS.forest : COLORS.stone;
+        ctx.fillStyle = node.type === 'tree' ? '#387c38' : '#bfbfbf';
         ctx.beginPath();
         ctx.roundRect(node.x * TILE_SIZE + 4, node.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8, 6);
         ctx.fill();
@@ -497,12 +532,24 @@
         ctx.fillRect(monster.x * TILE_SIZE + 4, monster.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8);
       });
 
+      mushrooms.forEach(mushroom => {
+        ctx.fillStyle = COLORS.mushroom;
+        ctx.beginPath();
+        ctx.arc(mushroom.x * TILE_SIZE + TILE_SIZE / 2, mushroom.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
       ctx.fillStyle = COLORS.player;
       ctx.beginPath();
       ctx.arc(player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2.5, 0, Math.PI * 2);
       ctx.fill();
 
-      requestAnimationFrame(draw);
+      if (performance.now() < invincibleUntil) {
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.4)';
+        ctx.beginPath();
+        ctx.arc(player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     function updateHUD(cycle) {
