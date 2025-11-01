@@ -181,6 +181,12 @@
 
     let inputs = new Set();
     let lastInteraction = 0;
+    let monsterMoveCounter = 0;
+    let monsterMoveInterval = 3; // モンスターは3フレームごとに移動
+    let playerMoveCounter = 0;
+    let playerMoveInterval = 8; // プレイヤーは8フレームごとに移動（約133ms）
+    let monsterAttackCounter = 0;
+    let monsterAttackInterval = 5; // モンスターの攻撃判定用
 
     const player = {
       x: Math.floor(GRID_WIDTH / 2),
@@ -191,7 +197,7 @@
       meat: 0
     };
 
-    const DAY_LENGTH = 60 * 1000; // 60 seconds per full cycle
+    const DAY_LENGTH = 120 * 1000; // 昼夜サイクルを120秒に延長
     let elapsed = 0;
     let lastTimestamp = 0;
     let dayCount = 1;
@@ -288,13 +294,13 @@
       if (cycle < 0.5) {
         // Daytime
         document.body.classList.remove('night');
-        if (animals.length < 4 && Math.random() < 0.01) {
+        if (animals.length < 4 && Math.random() < 0.005) {
           spawnAnimal();
         }
         monsters.length = 0; // monsters retreat at dawn
       } else {
         document.body.classList.add('night');
-        if (Math.random() < 0.02 && monsters.length < 6) {
+        if (Math.random() < 0.008 && monsters.length < 6) {
           spawnMonster();
         }
       }
@@ -311,6 +317,12 @@
     }
 
     function movePlayer() {
+      playerMoveCounter++;
+      
+      // プレイヤーは遅いペースで移動
+      if (playerMoveCounter < playerMoveInterval) return;
+      playerMoveCounter = 0;
+
       let dx = 0, dy = 0;
       if (inputs.has('ArrowUp') || inputs.has('KeyW')) dy--;
       if (inputs.has('ArrowDown') || inputs.has('KeyS')) dy++;
@@ -337,7 +349,7 @@
       animals.forEach(animal => {
         animal.cooldown -= dt;
         if (animal.cooldown <= 0) {
-          animal.cooldown = 1000 + Math.random() * 2000;
+          animal.cooldown = 2000 + Math.random() * 3000;
           const dir = [[1,0],[-1,0],[0,1],[0,-1]][Math.floor(Math.random() * 4)];
           const nx = animal.x + dir[0];
           const ny = animal.y + dir[1];
@@ -350,24 +362,39 @@
     }
 
     function moveMonsters(dt) {
-      monsters.forEach(monster => {
-        const dx = Math.sign(player.x - monster.x);
-        const dy = Math.sign(player.y - monster.y);
-        const nx = monster.x + dx;
-        const ny = monster.y + dy;
+      monsterMoveCounter++;
+      monsterAttackCounter++;
+      
+      // モンスターは遅いペースで移動
+      if (monsterMoveCounter >= 6) {
+        monsterMoveCounter = 0;
+        
+        monsters.forEach(monster => {
+          const dx = Math.sign(player.x - monster.x);
+          const dy = Math.sign(player.y - monster.y);
+          const nx = monster.x + dx;
+          const ny = monster.y + dy;
 
-        if (!isSolid(nx, ny)) {
-          monster.x = nx;
-          monster.y = ny;
-        }
-
-        if (monster.x === player.x && monster.y === player.y) {
-          player.health -= 5;
-          if (player.health <= 0) {
-            triggerGameOver();
+          if (!isSolid(nx, ny)) {
+            monster.x = nx;
+            monster.y = ny;
           }
-        }
-      });
+        });
+      }
+
+      // 攻撃判定は少し頻繁に
+      if (monsterAttackCounter >= monsterAttackInterval) {
+        monsterAttackCounter = 0;
+        
+        monsters.forEach(monster => {
+          if (monster.x === player.x && monster.y === player.y) {
+            player.health -= 5;
+            if (player.health <= 0) {
+              triggerGameOver();
+            }
+          }
+        });
+      }
     }
 
     function handleCombat() {
