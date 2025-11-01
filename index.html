@@ -44,8 +44,9 @@
     }
 
     .hud {
-      width: 640px;
-      display: flex;
+
+      width: 960px;
+
       flex-wrap: wrap;
       gap: 8px 16px;
       background: var(--ui-bg);
@@ -123,7 +124,9 @@
 </head>
 <body>
   <main>
-    <canvas id="game" width="640" height="480"></canvas>
+
+    <canvas id="game" width="960" height="640"></canvas>
+=
     <div class="hud" id="hud">
       <section>
         <h2>生存情報</h2>
@@ -161,6 +164,10 @@
     const GRID_WIDTH = canvas.width / TILE_SIZE;
     const GRID_HEIGHT = canvas.height / TILE_SIZE;
 
+    const MOVEMENT_DELAY = 180; // milliseconds between player steps
+    const MONSTER_STEP_DELAY = 450; // milliseconds between monster steps
+
+
     const COLORS = {
       grass: '#5cb85c',
       forest: '#387c38',
@@ -191,11 +198,16 @@
       meat: 0
     };
 
-    const DAY_LENGTH = 60 * 1000; // 60 seconds per full cycle
+
+    const DAY_LENGTH = 120 * 1000; // 120 seconds per full cycle
+
     let elapsed = 0;
     let lastTimestamp = 0;
     let dayCount = 1;
     let gameOver = false;
+
+    let movementCooldown = 0;
+
 
     const hudTime = document.getElementById('time');
     const hudCycle = document.getElementById('cycle');
@@ -218,11 +230,16 @@
         world.push(row);
       }
 
+
+      const treeCount = Math.floor((GRID_WIDTH * GRID_HEIGHT) / 10);
+      const stoneCount = Math.floor((GRID_WIDTH * GRID_HEIGHT) / 16);
+
       // Seed some forest clusters and stones
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < treeCount; i++) {
         placeResource('tree');
       }
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < stoneCount; i++) {
+
         placeResource('stone');
       }
     }
@@ -245,14 +262,18 @@
       const options = getEdgeTiles();
       if (!options.length) return;
       const spot = options[Math.floor(Math.random() * options.length)];
-      animals.push({ ...spot, hp: 2, cooldown: 0 });
+
+      animals.push({ ...spot, hp: 2, cooldown: 500 + Math.random() * 500 });
+
     }
 
     function spawnMonster() {
       const options = getEdgeTiles();
       if (!options.length) return;
       const spot = options[Math.floor(Math.random() * options.length)];
-      monsters.push({ ...spot, hp: 3, target: player });
+
+      monsters.push({ ...spot, hp: 3, target: player, cooldown: MONSTER_STEP_DELAY });
+
     }
 
     function getEdgeTiles() {
@@ -283,18 +304,25 @@
       if (gameOver) return;
 
       elapsed += dt;
+
+      movementCooldown = Math.max(0, movementCooldown - dt);
+
       const cycle = (elapsed % DAY_LENGTH) / DAY_LENGTH;
 
       if (cycle < 0.5) {
         // Daytime
         document.body.classList.remove('night');
-        if (animals.length < 4 && Math.random() < 0.01) {
+
+        if (animals.length < 6 && Math.random() < 0.005) {
+
           spawnAnimal();
         }
         monsters.length = 0; // monsters retreat at dawn
       } else {
         document.body.classList.add('night');
-        if (Math.random() < 0.02 && monsters.length < 6) {
+
+        if (Math.random() < 0.008 && monsters.length < 6) {
+
           spawnMonster();
         }
       }
@@ -317,13 +345,17 @@
       if (inputs.has('ArrowLeft') || inputs.has('KeyA')) dx--;
       if (inputs.has('ArrowRight') || inputs.has('KeyD')) dx++;
 
-      if (dx !== 0 || dy !== 0) {
-        const nx = player.x + dx;
-        const ny = player.y + dy;
-        if (!isSolid(nx, ny)) {
-          player.x = nx;
-          player.y = ny;
-        }
+
+      if (dx === 0 && dy === 0) return;
+      if (movementCooldown > 0) return;
+
+      const nx = player.x + dx;
+      const ny = player.y + dy;
+      if (!isSolid(nx, ny)) {
+        player.x = nx;
+        player.y = ny;
+        movementCooldown = MOVEMENT_DELAY;
+
       }
     }
 
@@ -351,6 +383,16 @@
 
     function moveMonsters(dt) {
       monsters.forEach(monster => {
+
+        if (monster.cooldown === undefined) {
+          monster.cooldown = MONSTER_STEP_DELAY;
+        }
+        monster.cooldown -= dt;
+        if (monster.cooldown > 0) {
+          return;
+        }
+
+
         const dx = Math.sign(player.x - monster.x);
         const dy = Math.sign(player.y - monster.y);
         const nx = monster.x + dx;
@@ -360,6 +402,10 @@
           monster.x = nx;
           monster.y = ny;
         }
+
+
+        monster.cooldown = MONSTER_STEP_DELAY;
+
 
         if (monster.x === player.x && monster.y === player.y) {
           player.health -= 5;
